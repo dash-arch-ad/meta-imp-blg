@@ -235,6 +235,8 @@ def fetch_meta_rows(act_id, token, since, until):
         since=since,
         until=until,
         time_increment="monthly",
+        level="ad",
+        fields=["campaign_name", "adset_name", "ad_name", "reach"],
     )
     daily_data = fetch_meta_insights(
         act_id=normalized_act_id,
@@ -242,6 +244,8 @@ def fetch_meta_rows(act_id, token, since, until):
         since=since,
         until=until,
         time_increment="1",
+        level="ad",
+        fields=["campaign_name", "adset_name", "ad_name", "reach"],
     )
 
     rows = []
@@ -249,31 +253,35 @@ def fetch_meta_rows(act_id, token, since, until):
     for item in monthly_data:
         month = to_month(item.get("date_start"))
         campaign_name = item.get("campaign_name", "") or ""
+        adset_name = item.get("adset_name", "") or ""
+        ad_name = item.get("ad_name", "") or ""
         reach = to_int(item.get("reach"))
-        rows.append(["meta", month, "", campaign_name, reach])
+        rows.append(["meta", month, "", campaign_name, adset_name, ad_name, reach])
 
     for item in daily_data:
         day = item.get("date_start", "")
         month = to_month(day)
         campaign_name = item.get("campaign_name", "") or ""
+        adset_name = item.get("adset_name", "") or ""
+        ad_name = item.get("ad_name", "") or ""
         reach = to_int(item.get("reach"))
-        rows.append(["meta", month, day, campaign_name, reach])
+        rows.append(["meta", month, day, campaign_name, adset_name, ad_name, reach])
 
     return rows
 
 
-def fetch_meta_insights(act_id, token, since, until, time_increment):
+def fetch_meta_insights(act_id, token, since, until, time_increment, level, fields):
     url = f"https://graph.facebook.com/{META_API_VERSION}/{act_id}/insights"
     params = {
         "access_token": token,
-        "level": "campaign",
+        "level": level,
         "time_range": json.dumps(
             {
                 "since": since.strftime("%Y-%m-%d"),
                 "until": until.strftime("%Y-%m-%d"),
             }
         ),
-        "fields": "campaign_name,reach",
+        "fields": ",".join(fields),
         "time_increment": time_increment,
         "limit": 5000,
     }
@@ -321,7 +329,8 @@ def fetch_tiktok_rows(
         batch = fetch_tiktok_report(
             advertiser_id=advertiser_id,
             access_token=access_token,
-            dimensions=["campaign_id"],
+            data_level="AUCTION_AD",
+            dimensions=["campaign_id", "adgroup_id", "ad_id"],
             metrics=["reach"],
             since=month_range["since"],
             until=month_range["until"],
@@ -335,7 +344,8 @@ def fetch_tiktok_rows(
         batch = fetch_tiktok_report(
             advertiser_id=advertiser_id,
             access_token=access_token,
-            dimensions=["campaign_id", "stat_time_day"],
+            data_level="AUCTION_AD",
+            dimensions=["campaign_id", "adgroup_id", "ad_id", "stat_time_day"],
             metrics=["reach"],
             since=chunk_since,
             until=chunk_until,
@@ -343,15 +353,35 @@ def fetch_tiktok_rows(
         daily_raw.extend(batch)
 
     campaign_ids = set()
+    adgroup_ids = set()
+    ad_ids = set()
+
     for item in monthly_raw + daily_raw:
         campaign_id = extract_tiktok_dimension(item, "campaign_id")
+        adgroup_id = extract_tiktok_dimension(item, "adgroup_id")
+        ad_id = extract_tiktok_dimension(item, "ad_id")
+
         if campaign_id:
             campaign_ids.add(str(campaign_id))
+        if adgroup_id:
+            adgroup_ids.add(str(adgroup_id))
+        if ad_id:
+            ad_ids.add(str(ad_id))
 
     campaign_name_map = fetch_tiktok_campaign_name_map(
         advertiser_id=advertiser_id,
         access_token=access_token,
         campaign_ids=sorted(campaign_ids),
+    )
+    adgroup_name_map = fetch_tiktok_adgroup_name_map(
+        advertiser_id=advertiser_id,
+        access_token=access_token,
+        adgroup_ids=sorted(adgroup_ids),
+    )
+    ad_name_map = fetch_tiktok_ad_name_map(
+        advertiser_id=advertiser_id,
+        access_token=access_token,
+        ad_ids=sorted(ad_ids),
     )
 
     rows = []
@@ -359,13 +389,25 @@ def fetch_tiktok_rows(
     for item in monthly_raw:
         month = item.get("_forced_month", "")
         campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
+        adgroup_id = str(extract_tiktok_dimension(item, "adgroup_id") or "")
+        ad_id = str(extract_tiktok_dimension(item, "ad_id") or "")
         campaign_name = (
             extract_tiktok_dimension(item, "campaign_name")
             or campaign_name_map.get(campaign_id)
             or campaign_id
         )
+        adgroup_name = (
+            extract_tiktok_dimension(item, "adgroup_name")
+            or adgroup_name_map.get(adgroup_id)
+            or adgroup_id
+        )
+        ad_name = (
+            extract_tiktok_dimension(item, "ad_name")
+            or ad_name_map.get(ad_id)
+            or ad_id
+        )
         reach = to_int(extract_tiktok_metric(item, "reach"))
-        rows.append(["tiktok", month, "", campaign_name, reach])
+        rows.append(["tiktok", month, "", campaign_name, adgroup_name, ad_name, reach])
 
     for item in daily_raw:
         day = extract_tiktok_dimension(item, "stat_time_day")
@@ -377,18 +419,38 @@ def fetch_tiktok_rows(
 
         month = to_month(day)
         campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
+        adgroup_id = str(extract_tiktok_dimension(item, "adgroup_id") or "")
+        ad_id = str(extract_tiktok_dimension(item, "ad_id") or "")
         campaign_name = (
             extract_tiktok_dimension(item, "campaign_name")
             or campaign_name_map.get(campaign_id)
             or campaign_id
         )
+        adgroup_name = (
+            extract_tiktok_dimension(item, "adgroup_name")
+            or adgroup_name_map.get(adgroup_id)
+            or adgroup_id
+        )
+        ad_name = (
+            extract_tiktok_dimension(item, "ad_name")
+            or ad_name_map.get(ad_id)
+            or ad_id
+        )
         reach = to_int(extract_tiktok_metric(item, "reach"))
-        rows.append(["tiktok", month, day, campaign_name, reach])
+        rows.append(["tiktok", month, day, campaign_name, adgroup_name, ad_name, reach])
 
     return rows
 
 
-def fetch_tiktok_report(advertiser_id, access_token, dimensions, metrics, since, until):
+def fetch_tiktok_report(
+    advertiser_id,
+    access_token,
+    data_level,
+    dimensions,
+    metrics,
+    since,
+    until,
+):
     url = "https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/"
     headers = {
         "Access-Token": access_token,
@@ -403,7 +465,7 @@ def fetch_tiktok_report(advertiser_id, access_token, dimensions, metrics, since,
             "advertiser_id": advertiser_id,
             "report_type": "BASIC",
             "service_type": "AUCTION",
-            "data_level": "AUCTION_CAMPAIGN",
+            "data_level": data_level,
             "dimensions": json.dumps(dimensions, separators=(",", ":")),
             "metrics": json.dumps(metrics, separators=(",", ":")),
             "start_date": since.strftime("%Y-%m-%d"),
@@ -496,6 +558,98 @@ def fetch_tiktok_campaign_name_map(advertiser_id, access_token, campaign_ids):
     return name_map
 
 
+def fetch_tiktok_adgroup_name_map(advertiser_id, access_token, adgroup_ids):
+    if not adgroup_ids:
+        return {}
+
+    url = "https://business-api.tiktok.com/open_api/v1.3/adgroup/get/"
+    headers = {
+        "Access-Token": access_token,
+    }
+
+    name_map = {}
+
+    for adgroup_id_batch in chunked(adgroup_ids, 100):
+        params = {
+            "advertiser_id": advertiser_id,
+            "filtering": json.dumps(
+                {"adgroup_ids": adgroup_id_batch}, separators=(",", ":")
+            ),
+            "page": 1,
+            "page_size": 1000,
+        }
+
+        response = requests.get(url, headers=headers, params=params, timeout=120)
+        if not response.ok:
+            print(
+                f"Warning: TikTok adgroup/get failed. status={response.status_code}. Fallback to adgroup_id."
+            )
+            continue
+
+        payload = response.json()
+        code = payload.get("code")
+        if code not in (0, "0"):
+            print(
+                f"Warning: TikTok adgroup/get returned code={code}. Fallback to adgroup_id."
+            )
+            continue
+
+        data = payload.get("data", {})
+        for item in data.get("list", []):
+            aid = str(item.get("adgroup_id", "")).strip()
+            aname = item.get("adgroup_name", "") or ""
+            if aid:
+                name_map[aid] = aname or aid
+
+    return name_map
+
+
+def fetch_tiktok_ad_name_map(advertiser_id, access_token, ad_ids):
+    if not ad_ids:
+        return {}
+
+    url = "https://business-api.tiktok.com/open_api/v1.3/ad/get/"
+    headers = {
+        "Access-Token": access_token,
+    }
+
+    name_map = {}
+
+    for ad_id_batch in chunked(ad_ids, 100):
+        params = {
+            "advertiser_id": advertiser_id,
+            "filtering": json.dumps(
+                {"ad_ids": ad_id_batch}, separators=(",", ":")
+            ),
+            "page": 1,
+            "page_size": 1000,
+        }
+
+        response = requests.get(url, headers=headers, params=params, timeout=120)
+        if not response.ok:
+            print(
+                f"Warning: TikTok ad/get failed. status={response.status_code}. Fallback to ad_id."
+            )
+            continue
+
+        payload = response.json()
+        code = payload.get("code")
+        if code not in (0, "0"):
+            print(
+                f"Warning: TikTok ad/get returned code={code}. Fallback to ad_id."
+            )
+            continue
+
+        data = payload.get("data", {})
+        for item in data.get("list", []):
+            aid = str(item.get("ad_id", "")).strip()
+            aname = item.get("ad_name", "") or ""
+            if aid:
+                name_map[aid] = aname or aid
+
+    return name_map
+
+
 def extract_tiktok_dimension(item, key):
     dimensions = item.get("dimensions", {})
     if isinstance(dimensions, dict) and key in dimensions:
@@ -556,7 +710,7 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
             campaign_name = item.get("campaign", {}).get("name", "") or ""
             unique_users = item.get("metrics", {}).get("uniqueUsers", 0)
             rows.append(
-                ["google", month_range["label"], "", campaign_name, to_int(unique_users)]
+                ["google", month_range["label"], "", campaign_name, "", "", to_int(unique_users)]
             )
 
     daily_query = f"""
@@ -583,7 +737,7 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
         campaign_name = item.get("campaign", {}).get("name", "") or ""
         day = item.get("segments", {}).get("date", "") or ""
         unique_users = item.get("metrics", {}).get("uniqueUsers", 0)
-        rows.append(["google", to_month(day), day, campaign_name, to_int(unique_users)])
+        rows.append(["google", to_month(day), day, campaign_name, "", "", to_int(unique_users)])
 
     return rows
 
@@ -677,13 +831,13 @@ def connect_spreadsheet(sheet_id, google_creds_dict):
 
 
 def write_to_sheet(spreadsheet, sheet_name, rows):
-    header = [["media", "month", "day", "cp_name", "reach"]]
+    header = [["media", "month", "day", "cp_name", "ad_set", "ad", "reach"]]
 
     try:
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
         except gspread.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=5)
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=7)
 
         worksheet.clear()
         output = header + rows
@@ -697,7 +851,7 @@ def sort_rows(rows):
     media_order = {"meta": 0, "tiktok": 1, "google": 2}
 
     def sort_key(row):
-        media, month, day, cp_name, _reach = row
+        media, month, day, cp_name, ad_set, ad, _reach = row
         month_num = int(str(month).replace("-", "")) if month else 0
         day_num = 99999999 if not day else int(str(day).replace("-", ""))
         return (
@@ -705,6 +859,8 @@ def sort_rows(rows):
             -month_num,
             -day_num,
             cp_name,
+            ad_set,
+            ad,
         )
 
     return sorted(rows, key=sort_key)
