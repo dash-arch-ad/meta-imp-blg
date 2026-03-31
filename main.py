@@ -302,14 +302,6 @@ def fetch_meta_insights(act_id, token, since, until, time_increment):
 
 
 def fetch_tiktok_rows(advertiser_id, access_token, since, until):
-    monthly_raw = fetch_tiktok_report(
-        advertiser_id=advertiser_id,
-        access_token=access_token,
-        dimensions=["campaign_id", "stat_time_month"],
-        metrics=["reach"],
-        since=since,
-        until=until,
-    )
     daily_raw = fetch_tiktok_report(
         advertiser_id=advertiser_id,
         access_token=access_token,
@@ -320,7 +312,7 @@ def fetch_tiktok_rows(advertiser_id, access_token, since, until):
     )
 
     campaign_ids = set()
-    for item in monthly_raw + daily_raw:
+    for item in daily_raw:
         campaign_id = extract_tiktok_dimension(item, "campaign_id")
         if campaign_id:
             campaign_ids.add(str(campaign_id))
@@ -332,20 +324,11 @@ def fetch_tiktok_rows(advertiser_id, access_token, since, until):
     )
 
     rows = []
-
-    for item in monthly_raw:
-        month_value = extract_tiktok_dimension(item, "stat_time_month")
-        campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
-        campaign_name = (
-            extract_tiktok_dimension(item, "campaign_name")
-            or campaign_name_map.get(campaign_id)
-            or campaign_id
-        )
-        reach = to_int(extract_tiktok_metric(item, "reach"))
-        rows.append(["tiktok", to_month(month_value), "", campaign_name, reach])
+    monthly_totals = {}
 
     for item in daily_raw:
         day = extract_tiktok_dimension(item, "stat_time_day")
+        month = to_month(day)
         campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
         campaign_name = (
             extract_tiktok_dimension(item, "campaign_name")
@@ -353,7 +336,14 @@ def fetch_tiktok_rows(advertiser_id, access_token, since, until):
             or campaign_id
         )
         reach = to_int(extract_tiktok_metric(item, "reach"))
-        rows.append(["tiktok", to_month(day), day, campaign_name, reach])
+
+        rows.append(["tiktok", month, day, campaign_name, reach])
+
+        key = (month, campaign_name)
+        monthly_totals[key] = monthly_totals.get(key, 0) + reach
+
+    for (month, campaign_name), reach in monthly_totals.items():
+        rows.append(["tiktok", month, "", campaign_name, reach])
 
     return rows
 
