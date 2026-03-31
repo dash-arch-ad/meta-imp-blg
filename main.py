@@ -43,13 +43,9 @@ def main():
     )
     print(f"TikTok rows built: {len(tiktok_rows)}")
 
-    google_rows = fetch_google_ads_rows(
-        google_ads_conf=resolved["google_ads"],
-        monthly_ranges=monthly_ranges,
-        daily_since=daily_since,
-        daily_until=daily_until,
-    )
-    print(f"Google Ads rows built: {len(google_rows)}")
+    # Google Ads は今回停止
+    google_rows = []
+    print("Google Ads rows built: 0 (disabled)")
 
     all_rows = sort_rows(meta_rows + tiktok_rows + google_rows)
 
@@ -93,7 +89,6 @@ def mask_sensitive_values(config):
 
     meta = config.get("meta", {})
     tiktok = config.get("tiktok", {})
-    google_ads = config.get("google_ads", {})
 
     push(meta.get("token"))
     push(config.get("m_token"))
@@ -101,12 +96,6 @@ def mask_sensitive_values(config):
     push(config.get("m_act_id"))
     push(tiktok.get("access_token"))
     push(tiktok.get("advertiser_id"))
-    push(google_ads.get("developer_token"))
-    push(google_ads.get("client_id"))
-    push(google_ads.get("client_secret"))
-    push(google_ads.get("refresh_token"))
-    push(google_ads.get("customer_id"))
-    push(google_ads.get("login_customer_id"))
 
     for value in sorted(set(candidates)):
         print(f"::add-mask::{value}")
@@ -164,11 +153,6 @@ def validate_config(resolved):
         "meta.account_id": resolved["meta"]["account_id"],
         "tiktok.access_token": resolved["tiktok"]["access_token"],
         "tiktok.advertiser_id": resolved["tiktok"]["advertiser_id"],
-        "google_ads.developer_token": resolved["google_ads"]["developer_token"],
-        "google_ads.client_id": resolved["google_ads"]["client_id"],
-        "google_ads.client_secret": resolved["google_ads"]["client_secret"],
-        "google_ads.refresh_token": resolved["google_ads"]["refresh_token"],
-        "google_ads.customer_id": resolved["google_ads"]["customer_id"],
         "sheet.spreadsheet_id": resolved["sheet"]["spreadsheet_id"],
         "sheet.google_service_account": resolved["sheet"]["google_service_account"],
     }
