@@ -35,11 +35,14 @@ def main():
     )
     print(f"Meta rows built: {len(meta_rows)}")
 
+    tiktok_fetch_since = get_tiktok_daily_fetch_since(daily_until)
     tiktok_rows = fetch_tiktok_rows(
         advertiser_id=resolved["tiktok"]["advertiser_id"],
         access_token=resolved["tiktok"]["access_token"],
-        since=daily_since,
-        until=daily_until,
+        monthly_ranges=monthly_ranges,
+        output_since=daily_since,
+        output_until=daily_until,
+        daily_fetch_since=tiktok_fetch_since,
     )
     print(f"TikTok rows built: {len(tiktok_rows)}")
 
@@ -219,6 +222,10 @@ def get_target_date_ranges():
     return monthly_ranges, last_month_start, yesterday
 
 
+def get_tiktok_daily_fetch_since(until):
+    return until - timedelta(days=63)
+
+
 def fetch_meta_rows(act_id, token, since, until):
     normalized_act_id = normalize_meta_act_id(act_id)
 
@@ -301,18 +308,42 @@ def fetch_meta_insights(act_id, token, since, until, time_increment):
     return all_rows
 
 
-def fetch_tiktok_rows(advertiser_id, access_token, since, until):
-    daily_raw = fetch_tiktok_report(
-        advertiser_id=advertiser_id,
-        access_token=access_token,
-        dimensions=["campaign_id", "stat_time_day"],
-        metrics=["reach"],
-        since=since,
-        until=until,
-    )
+def fetch_tiktok_rows(
+    advertiser_id,
+    access_token,
+    monthly_ranges,
+    output_since,
+    output_until,
+    daily_fetch_since,
+):
+    monthly_raw = []
+    for month_range in monthly_ranges:
+        batch = fetch_tiktok_report(
+            advertiser_id=advertiser_id,
+            access_token=access_token,
+            dimensions=["campaign_id"],
+            metrics=["reach"],
+            since=month_range["since"],
+            until=month_range["until"],
+        )
+        for item in batch:
+            item["_forced_month"] = month_range["label"]
+        monthly_raw.extend(batch)
+
+    daily_raw = []
+    for chunk_since, chunk_until in split_date_ranges(daily_fetch_since, output_until, 30):
+        batch = fetch_tiktok_report(
+            advertiser_id=advertiser_id,
+            access_token=access_token,
+            dimensions=["campaign_id", "stat_time_day"],
+            metrics=["reach"],
+            since=chunk_since,
+            until=chunk_until,
+        )
+        daily_raw.extend(batch)
 
     campaign_ids = set()
-    for item in daily_raw:
+    for item in monthly_raw + daily_raw:
         campaign_id = extract_tiktok_dimension(item, "campaign_id")
         if campaign_id:
             campaign_ids.add(str(campaign_id))
@@ -324,10 +355,26 @@ def fetch_tiktok_rows(advertiser_id, access_token, since, until):
     )
 
     rows = []
-    monthly_totals = {}
+
+    for item in monthly_raw:
+        month = item.get("_forced_month", "")
+        campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
+        campaign_name = (
+            extract_tiktok_dimension(item, "campaign_name")
+            or campaign_name_map.get(campaign_id)
+            or campaign_id
+        )
+        reach = to_int(extract_tiktok_metric(item, "reach"))
+        rows.append(["tiktok", month, "", campaign_name, reach])
 
     for item in daily_raw:
         day = extract_tiktok_dimension(item, "stat_time_day")
+        if not day:
+            continue
+
+        if not is_in_date_range(day, output_since, output_until):
+            continue
+
         month = to_month(day)
         campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
         campaign_name = (
@@ -336,14 +383,7 @@ def fetch_tiktok_rows(advertiser_id, access_token, since, until):
             or campaign_id
         )
         reach = to_int(extract_tiktok_metric(item, "reach"))
-
         rows.append(["tiktok", month, day, campaign_name, reach])
-
-        key = (month, campaign_name)
-        monthly_totals[key] = monthly_totals.get(key, 0) + reach
-
-    for (month, campaign_name), reach in monthly_totals.items():
-        rows.append(["tiktok", month, "", campaign_name, reach])
 
     return rows
 
@@ -668,6 +708,23 @@ def sort_rows(rows):
         )
 
     return sorted(rows, key=sort_key)
+
+
+def split_date_ranges(since, until, max_days):
+    ranges = []
+    current_since = since
+
+    while current_since <= until:
+        current_until = min(current_since + timedelta(days=max_days - 1), until)
+        ranges.append((current_since, current_until))
+        current_since = current_until + timedelta(days=1)
+
+    return ranges
+
+
+def is_in_date_range(day_str, since, until):
+    target = datetime.strptime(day_str, "%Y-%m-%d").date()
+    return since <= target <= until
 
 
 def chunked(items, size):
