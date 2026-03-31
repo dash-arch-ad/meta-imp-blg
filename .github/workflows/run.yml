@@ -31,7 +31,7 @@ jobs:
         env:
           APP_SECRET_JSON: ${{ secrets.APP_SECRET_JSON }}
         run: |
-          python meta_to_sheets.py
+          python main.py
 
       - name: Prevent 60-day workflow suspension
         run: |
