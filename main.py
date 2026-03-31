@@ -330,8 +330,8 @@ def fetch_tiktok_rows(
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_AD",
-            dimensions=["campaign_id", "adgroup_id", "ad_id"],
-            metrics=["reach"],
+            dimensions=["ad_id"],
+            metrics=["campaign_name", "adgroup_name", "ad_name", "reach"],
             since=month_range["since"],
             until=month_range["until"],
         )
@@ -345,67 +345,20 @@ def fetch_tiktok_rows(
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_AD",
-            dimensions=["campaign_id", "adgroup_id", "ad_id", "stat_time_day"],
-            metrics=["reach"],
+            dimensions=["ad_id", "stat_time_day"],
+            metrics=["campaign_name", "adgroup_name", "ad_name", "reach"],
             since=chunk_since,
             until=chunk_until,
         )
         daily_raw.extend(batch)
 
-    campaign_ids = set()
-    adgroup_ids = set()
-    ad_ids = set()
-
-    for item in monthly_raw + daily_raw:
-        campaign_id = extract_tiktok_dimension(item, "campaign_id")
-        adgroup_id = extract_tiktok_dimension(item, "adgroup_id")
-        ad_id = extract_tiktok_dimension(item, "ad_id")
-
-        if campaign_id:
-            campaign_ids.add(str(campaign_id))
-        if adgroup_id:
-            adgroup_ids.add(str(adgroup_id))
-        if ad_id:
-            ad_ids.add(str(ad_id))
-
-    campaign_name_map = fetch_tiktok_campaign_name_map(
-        advertiser_id=advertiser_id,
-        access_token=access_token,
-        campaign_ids=sorted(campaign_ids),
-    )
-    adgroup_name_map = fetch_tiktok_adgroup_name_map(
-        advertiser_id=advertiser_id,
-        access_token=access_token,
-        adgroup_ids=sorted(adgroup_ids),
-    )
-    ad_name_map = fetch_tiktok_ad_name_map(
-        advertiser_id=advertiser_id,
-        access_token=access_token,
-        ad_ids=sorted(ad_ids),
-    )
-
     rows = []
 
     for item in monthly_raw:
         month = item.get("_forced_month", "")
-        campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
-        adgroup_id = str(extract_tiktok_dimension(item, "adgroup_id") or "")
-        ad_id = str(extract_tiktok_dimension(item, "ad_id") or "")
-        campaign_name = (
-            extract_tiktok_dimension(item, "campaign_name")
-            or campaign_name_map.get(campaign_id)
-            or campaign_id
-        )
-        adgroup_name = (
-            extract_tiktok_dimension(item, "adgroup_name")
-            or adgroup_name_map.get(adgroup_id)
-            or adgroup_id
-        )
-        ad_name = (
-            extract_tiktok_dimension(item, "ad_name")
-            or ad_name_map.get(ad_id)
-            or ad_id
-        )
+        campaign_name = extract_tiktok_metric(item, "campaign_name")
+        adgroup_name = extract_tiktok_metric(item, "adgroup_name")
+        ad_name = extract_tiktok_metric(item, "ad_name")
         reach = to_int(extract_tiktok_metric(item, "reach"))
         rows.append(["tiktok", month, "", campaign_name, adgroup_name, ad_name, reach])
 
@@ -418,24 +371,9 @@ def fetch_tiktok_rows(
             continue
 
         month = to_month(day)
-        campaign_id = str(extract_tiktok_dimension(item, "campaign_id") or "")
-        adgroup_id = str(extract_tiktok_dimension(item, "adgroup_id") or "")
-        ad_id = str(extract_tiktok_dimension(item, "ad_id") or "")
-        campaign_name = (
-            extract_tiktok_dimension(item, "campaign_name")
-            or campaign_name_map.get(campaign_id)
-            or campaign_id
-        )
-        adgroup_name = (
-            extract_tiktok_dimension(item, "adgroup_name")
-            or adgroup_name_map.get(adgroup_id)
-            or adgroup_id
-        )
-        ad_name = (
-            extract_tiktok_dimension(item, "ad_name")
-            or ad_name_map.get(ad_id)
-            or ad_id
-        )
+        campaign_name = extract_tiktok_metric(item, "campaign_name")
+        adgroup_name = extract_tiktok_metric(item, "adgroup_name")
+        ad_name = extract_tiktok_metric(item, "ad_name")
         reach = to_int(extract_tiktok_metric(item, "reach"))
         rows.append(["tiktok", month, day, campaign_name, adgroup_name, ad_name, reach])
 
@@ -674,7 +612,7 @@ def extract_tiktok_metric(item, key):
     if key in item:
         return item.get(key)
 
-    return 0
+    return "" if key in {"campaign_name", "adgroup_name", "ad_name"} else 0
 
 
 def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_until):
