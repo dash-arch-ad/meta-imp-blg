@@ -200,6 +200,13 @@ def normalize_meta_act_id(raw_act_id):
     return f"act_{cleaned}"
 
 
+def normalize_day_str(value):
+    if not value:
+        return ""
+    value = str(value).strip()
+    return value[:10]
+
+
 def get_target_date_ranges():
     today_jst = datetime.now(JST).date()
     yesterday = today_jst - timedelta(days=1)
@@ -515,7 +522,7 @@ def fetch_tiktok_rows(
             until=chunk_until,
         )
         for item in batch:
-            day = extract_tiktok_dimension(item, "stat_time_day")
+            day = normalize_day_str(extract_tiktok_dimension(item, "stat_time_day"))
             if not day:
                 continue
             if not is_in_date_range(day, output_since, output_until):
@@ -544,7 +551,7 @@ def fetch_tiktok_rows(
             until=chunk_until,
         )
         for item in batch:
-            day = extract_tiktok_dimension(item, "stat_time_day")
+            day = normalize_day_str(extract_tiktok_dimension(item, "stat_time_day"))
             if not day:
                 continue
             if not is_in_date_range(day, output_since, output_until):
@@ -1235,7 +1242,10 @@ def split_date_ranges(since, until, max_days):
 
 
 def is_in_date_range(day_str, since, until):
-    target = datetime.strptime(day_str, "%Y-%m-%d").date()
+    normalized = normalize_day_str(day_str)
+    if not normalized:
+        return False
+    target = datetime.strptime(normalized, "%Y-%m-%d").date()
     return since <= target <= until
 
 
