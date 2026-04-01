@@ -46,7 +46,13 @@ def main():
     )
     print(f"TikTok rows built: {len(tiktok_rows)}")
 
-    # Google Ads は今回停止
+    # Google Ads はまだ未稼働のため停止
+    # google_rows = fetch_google_ads_rows(
+    #     google_ads_conf=resolved["google_ads"],
+    #     monthly_ranges=monthly_ranges,
+    #     daily_since=daily_since,
+    #     daily_until=daily_until,
+    # )
     google_rows = []
     print("Google Ads rows built: 0 (disabled)")
 
@@ -226,46 +232,180 @@ def get_tiktok_daily_fetch_since(until):
     return until - timedelta(days=63)
 
 
+def make_output_row(
+    media,
+    scope,
+    period,
+    campaign_name="",
+    adset_name="",
+    ad_name="",
+    unique_reach=0,
+    unique_ad_recall_lift="",
+):
+    return [
+        media,
+        scope,
+        period,
+        campaign_name or "",
+        adset_name or "",
+        ad_name or "",
+        to_int(unique_reach),
+        to_int_or_blank(unique_ad_recall_lift),
+    ]
+
+
+def to_int_or_blank(value):
+    if value in (None, ""):
+        return ""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return ""
+
+
+def get_nested(data, *keys, default=""):
+    current = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+        if current is None:
+            return default
+    return current
+
+
 def fetch_meta_rows(act_id, token, since, until):
     normalized_act_id = normalize_meta_act_id(act_id)
+    rows = []
 
-    monthly_data = fetch_meta_insights(
+    common_fields = ["reach", "estimated_ad_recallers"]
+
+    account_monthly = fetch_meta_insights(
+        act_id=normalized_act_id,
+        token=token,
+        since=since,
+        until=until,
+        time_increment="monthly",
+        level="account",
+        fields=common_fields,
+    )
+    for item in account_monthly:
+        rows.append(
+            make_output_row(
+                media="meta",
+                scope="all",
+                period=to_month(item.get("date_start")),
+                unique_reach=item.get("reach"),
+                unique_ad_recall_lift=item.get("estimated_ad_recallers"),
+            )
+        )
+
+    account_daily = fetch_meta_insights(
+        act_id=normalized_act_id,
+        token=token,
+        since=since,
+        until=until,
+        time_increment="1",
+        level="account",
+        fields=common_fields,
+    )
+    for item in account_daily:
+        rows.append(
+            make_output_row(
+                media="meta",
+                scope="day",
+                period=item.get("date_start", ""),
+                unique_reach=item.get("reach"),
+                unique_ad_recall_lift=item.get("estimated_ad_recallers"),
+            )
+        )
+
+    campaign_daily = fetch_meta_insights(
+        act_id=normalized_act_id,
+        token=token,
+        since=since,
+        until=until,
+        time_increment="1",
+        level="campaign",
+        fields=["campaign_name", "reach", "estimated_ad_recallers"],
+    )
+    for item in campaign_daily:
+        rows.append(
+            make_output_row(
+                media="meta",
+                scope="campaign_day",
+                period=item.get("date_start", ""),
+                campaign_name=item.get("campaign_name", ""),
+                unique_reach=item.get("reach"),
+                unique_ad_recall_lift=item.get("estimated_ad_recallers"),
+            )
+        )
+
+    campaign_monthly = fetch_meta_insights(
+        act_id=normalized_act_id,
+        token=token,
+        since=since,
+        until=until,
+        time_increment="monthly",
+        level="campaign",
+        fields=["campaign_name", "reach", "estimated_ad_recallers"],
+    )
+    for item in campaign_monthly:
+        rows.append(
+            make_output_row(
+                media="meta",
+                scope="campaign",
+                period=to_month(item.get("date_start")),
+                campaign_name=item.get("campaign_name", ""),
+                unique_reach=item.get("reach"),
+                unique_ad_recall_lift=item.get("estimated_ad_recallers"),
+            )
+        )
+
+    adset_monthly = fetch_meta_insights(
+        act_id=normalized_act_id,
+        token=token,
+        since=since,
+        until=until,
+        time_increment="monthly",
+        level="adset",
+        fields=["campaign_name", "adset_name", "reach", "estimated_ad_recallers"],
+    )
+    for item in adset_monthly:
+        rows.append(
+            make_output_row(
+                media="meta",
+                scope="adset",
+                period=to_month(item.get("date_start")),
+                campaign_name=item.get("campaign_name", ""),
+                adset_name=item.get("adset_name", ""),
+                unique_reach=item.get("reach"),
+                unique_ad_recall_lift=item.get("estimated_ad_recallers"),
+            )
+        )
+
+    ad_monthly = fetch_meta_insights(
         act_id=normalized_act_id,
         token=token,
         since=since,
         until=until,
         time_increment="monthly",
         level="ad",
-        fields=["campaign_name", "adset_name", "ad_name", "reach"],
+        fields=["campaign_name", "adset_name", "ad_name", "reach", "estimated_ad_recallers"],
     )
-    daily_data = fetch_meta_insights(
-        act_id=normalized_act_id,
-        token=token,
-        since=since,
-        until=until,
-        time_increment="1",
-        level="ad",
-        fields=["campaign_name", "adset_name", "ad_name", "reach"],
-    )
-
-    rows = []
-
-    for item in monthly_data:
-        month = to_month(item.get("date_start"))
-        campaign_name = item.get("campaign_name", "") or ""
-        adset_name = item.get("adset_name", "") or ""
-        ad_name = item.get("ad_name", "") or ""
-        reach = to_int(item.get("reach"))
-        rows.append(["meta", month, "", campaign_name, adset_name, ad_name, reach])
-
-    for item in daily_data:
-        day = item.get("date_start", "")
-        month = to_month(day)
-        campaign_name = item.get("campaign_name", "") or ""
-        adset_name = item.get("adset_name", "") or ""
-        ad_name = item.get("ad_name", "") or ""
-        reach = to_int(item.get("reach"))
-        rows.append(["meta", month, day, campaign_name, adset_name, ad_name, reach])
+    for item in ad_monthly:
+        rows.append(
+            make_output_row(
+                media="meta",
+                scope="ad",
+                period=to_month(item.get("date_start")),
+                campaign_name=item.get("campaign_name", ""),
+                adset_name=item.get("adset_name", ""),
+                ad_name=item.get("ad_name", ""),
+                unique_reach=item.get("reach"),
+                unique_ad_recall_lift=item.get("estimated_ad_recallers"),
+            )
+        )
 
     return rows
 
@@ -324,7 +464,129 @@ def fetch_tiktok_rows(
     output_until,
     daily_fetch_since,
 ):
-    monthly_raw = []
+    rows = []
+
+    for month_range in monthly_ranges:
+        batch = fetch_tiktok_report(
+            advertiser_id=advertiser_id,
+            access_token=access_token,
+            data_level="AUCTION_ADVERTISER",
+            dimensions=[],
+            metrics=["reach"],
+            since=month_range["since"],
+            until=month_range["until"],
+        )
+        for item in batch:
+            rows.append(
+                make_output_row(
+                    media="tiktok",
+                    scope="all",
+                    period=month_range["label"],
+                    unique_reach=extract_tiktok_metric(item, "reach"),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+    for chunk_since, chunk_until in split_date_ranges(daily_fetch_since, output_until, 30):
+        batch = fetch_tiktok_report(
+            advertiser_id=advertiser_id,
+            access_token=access_token,
+            data_level="AUCTION_ADVERTISER",
+            dimensions=["stat_time_day"],
+            metrics=["reach"],
+            since=chunk_since,
+            until=chunk_until,
+        )
+        for item in batch:
+            day = extract_tiktok_dimension(item, "stat_time_day")
+            if not day:
+                continue
+            if not is_in_date_range(day, output_since, output_until):
+                continue
+
+            rows.append(
+                make_output_row(
+                    media="tiktok",
+                    scope="day",
+                    period=day,
+                    unique_reach=extract_tiktok_metric(item, "reach"),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+    for chunk_since, chunk_until in split_date_ranges(daily_fetch_since, output_until, 30):
+        batch = fetch_tiktok_report(
+            advertiser_id=advertiser_id,
+            access_token=access_token,
+            data_level="AUCTION_CAMPAIGN",
+            dimensions=["campaign_id", "stat_time_day"],
+            metrics=["campaign_name", "reach"],
+            since=chunk_since,
+            until=chunk_until,
+        )
+        for item in batch:
+            day = extract_tiktok_dimension(item, "stat_time_day")
+            if not day:
+                continue
+            if not is_in_date_range(day, output_since, output_until):
+                continue
+
+            rows.append(
+                make_output_row(
+                    media="tiktok",
+                    scope="campaign_day",
+                    period=day,
+                    campaign_name=extract_tiktok_metric(item, "campaign_name"),
+                    unique_reach=extract_tiktok_metric(item, "reach"),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+    for month_range in monthly_ranges:
+        batch = fetch_tiktok_report(
+            advertiser_id=advertiser_id,
+            access_token=access_token,
+            data_level="AUCTION_CAMPAIGN",
+            dimensions=["campaign_id"],
+            metrics=["campaign_name", "reach"],
+            since=month_range["since"],
+            until=month_range["until"],
+        )
+        for item in batch:
+            rows.append(
+                make_output_row(
+                    media="tiktok",
+                    scope="campaign",
+                    period=month_range["label"],
+                    campaign_name=extract_tiktok_metric(item, "campaign_name"),
+                    unique_reach=extract_tiktok_metric(item, "reach"),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+    for month_range in monthly_ranges:
+        batch = fetch_tiktok_report(
+            advertiser_id=advertiser_id,
+            access_token=access_token,
+            data_level="AUCTION_ADGROUP",
+            dimensions=["adgroup_id"],
+            metrics=["campaign_name", "adgroup_name", "reach"],
+            since=month_range["since"],
+            until=month_range["until"],
+        )
+        for item in batch:
+            rows.append(
+                make_output_row(
+                    media="tiktok",
+                    scope="adset",
+                    period=month_range["label"],
+                    campaign_name=extract_tiktok_metric(item, "campaign_name"),
+                    adset_name=extract_tiktok_metric(item, "adgroup_name"),
+                    unique_reach=extract_tiktok_metric(item, "reach"),
+                    unique_ad_recall_lift="",
+                )
+            )
+
     for month_range in monthly_ranges:
         batch = fetch_tiktok_report(
             advertiser_id=advertiser_id,
@@ -336,46 +598,18 @@ def fetch_tiktok_rows(
             until=month_range["until"],
         )
         for item in batch:
-            item["_forced_month"] = month_range["label"]
-        monthly_raw.extend(batch)
-
-    daily_raw = []
-    for chunk_since, chunk_until in split_date_ranges(daily_fetch_since, output_until, 30):
-        batch = fetch_tiktok_report(
-            advertiser_id=advertiser_id,
-            access_token=access_token,
-            data_level="AUCTION_AD",
-            dimensions=["ad_id", "stat_time_day"],
-            metrics=["campaign_name", "adgroup_name", "ad_name", "reach"],
-            since=chunk_since,
-            until=chunk_until,
-        )
-        daily_raw.extend(batch)
-
-    rows = []
-
-    for item in monthly_raw:
-        month = item.get("_forced_month", "")
-        campaign_name = extract_tiktok_metric(item, "campaign_name")
-        adgroup_name = extract_tiktok_metric(item, "adgroup_name")
-        ad_name = extract_tiktok_metric(item, "ad_name")
-        reach = to_int(extract_tiktok_metric(item, "reach"))
-        rows.append(["tiktok", month, "", campaign_name, adgroup_name, ad_name, reach])
-
-    for item in daily_raw:
-        day = extract_tiktok_dimension(item, "stat_time_day")
-        if not day:
-            continue
-
-        if not is_in_date_range(day, output_since, output_until):
-            continue
-
-        month = to_month(day)
-        campaign_name = extract_tiktok_metric(item, "campaign_name")
-        adgroup_name = extract_tiktok_metric(item, "adgroup_name")
-        ad_name = extract_tiktok_metric(item, "ad_name")
-        reach = to_int(extract_tiktok_metric(item, "reach"))
-        rows.append(["tiktok", month, day, campaign_name, adgroup_name, ad_name, reach])
+            rows.append(
+                make_output_row(
+                    media="tiktok",
+                    scope="ad",
+                    period=month_range["label"],
+                    campaign_name=extract_tiktok_metric(item, "campaign_name"),
+                    adset_name=extract_tiktok_metric(item, "adgroup_name"),
+                    ad_name=extract_tiktok_metric(item, "ad_name"),
+                    unique_reach=extract_tiktok_metric(item, "reach"),
+                    unique_ad_recall_lift="",
+                )
+            )
 
     return rows
 
@@ -404,8 +638,6 @@ def fetch_tiktok_report(
             "report_type": "BASIC",
             "service_type": "AUCTION",
             "data_level": data_level,
-            "dimensions": json.dumps(dimensions, separators=(",", ":")),
-            "metrics": json.dumps(metrics, separators=(",", ":")),
             "start_date": since.strftime("%Y-%m-%d"),
             "end_date": until.strftime("%Y-%m-%d"),
             "page": page,
@@ -414,6 +646,11 @@ def fetch_tiktok_report(
             "enable_total_metrics": "false",
             "multi_adv_report_in_utc_time": "false",
         }
+
+        if dimensions is not None:
+            params["dimensions"] = json.dumps(dimensions, separators=(",", ":"))
+        if metrics is not None:
+            params["metrics"] = json.dumps(metrics, separators=(",", ":"))
 
         response = requests.get(url, headers=headers, params=params, timeout=120)
         try:
@@ -627,6 +864,93 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
     for month_range in monthly_ranges:
         query = f"""
             SELECT
+              metrics.unique_users
+            FROM customer
+            WHERE segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
+        """.strip()
+
+        result_rows = google_ads_search_stream(
+            access_token=access_token,
+            developer_token=google_ads_conf["developer_token"],
+            customer_id=google_ads_conf["customer_id"],
+            login_customer_id=google_ads_conf["login_customer_id"],
+            query=query,
+        )
+
+        for item in result_rows:
+            rows.append(
+                make_output_row(
+                    media="google",
+                    scope="all",
+                    period=month_range["label"],
+                    unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+    daily_all_query = f"""
+        SELECT
+          segments.date,
+          metrics.unique_users
+        FROM customer
+        WHERE segments.date BETWEEN '{daily_since:%Y-%m-%d}' AND '{daily_until:%Y-%m-%d}'
+        ORDER BY segments.date
+    """.strip()
+
+    daily_all_rows = google_ads_search_stream(
+        access_token=access_token,
+        developer_token=google_ads_conf["developer_token"],
+        customer_id=google_ads_conf["customer_id"],
+        login_customer_id=google_ads_conf["login_customer_id"],
+        query=daily_all_query,
+    )
+
+    for item in daily_all_rows:
+        rows.append(
+            make_output_row(
+                media="google",
+                scope="day",
+                period=get_nested(item, "segments", "date", default=""),
+                unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
+                unique_ad_recall_lift="",
+            )
+        )
+
+    daily_campaign_query = f"""
+        SELECT
+          campaign.id,
+          campaign.name,
+          segments.date,
+          metrics.unique_users
+        FROM campaign
+        WHERE campaign.status != 'REMOVED'
+          AND segments.date BETWEEN '{daily_since:%Y-%m-%d}' AND '{daily_until:%Y-%m-%d}'
+        ORDER BY segments.date, campaign.id
+    """.strip()
+
+    daily_campaign_rows = google_ads_search_stream(
+        access_token=access_token,
+        developer_token=google_ads_conf["developer_token"],
+        customer_id=google_ads_conf["customer_id"],
+        login_customer_id=google_ads_conf["login_customer_id"],
+        query=daily_campaign_query,
+    )
+
+    for item in daily_campaign_rows:
+        rows.append(
+            make_output_row(
+                media="google",
+                scope="campaign_day",
+                period=get_nested(item, "segments", "date", default=""),
+                campaign_name=get_nested(item, "campaign", "name", default=""),
+                unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
+                unique_ad_recall_lift="",
+            )
+        )
+
+    for month_range in monthly_ranges:
+        query = f"""
+            SELECT
               campaign.id,
               campaign.name,
               metrics.unique_users
@@ -645,37 +969,94 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
         )
 
         for item in result_rows:
-            campaign_name = item.get("campaign", {}).get("name", "") or ""
-            unique_users = item.get("metrics", {}).get("uniqueUsers", 0)
             rows.append(
-                ["google", month_range["label"], "", campaign_name, "", "", to_int(unique_users)]
+                make_output_row(
+                    media="google",
+                    scope="campaign",
+                    period=month_range["label"],
+                    campaign_name=get_nested(item, "campaign", "name", default=""),
+                    unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
+                    unique_ad_recall_lift="",
+                )
             )
 
-    daily_query = f"""
-        SELECT
-          campaign.id,
-          campaign.name,
-          segments.date,
-          metrics.unique_users
-        FROM campaign
-        WHERE campaign.status != 'REMOVED'
-          AND segments.date BETWEEN '{daily_since:%Y-%m-%d}' AND '{daily_until:%Y-%m-%d}'
-        ORDER BY segments.date, campaign.id
-    """.strip()
+    for month_range in monthly_ranges:
+        query = f"""
+            SELECT
+              campaign.name,
+              ad_group.id,
+              ad_group.name,
+              metrics.unique_users
+            FROM ad_group
+            WHERE campaign.status != 'REMOVED'
+              AND ad_group.status != 'REMOVED'
+              AND segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
+            ORDER BY campaign.name, ad_group.id
+        """.strip()
 
-    daily_result_rows = google_ads_search_stream(
-        access_token=access_token,
-        developer_token=google_ads_conf["developer_token"],
-        customer_id=google_ads_conf["customer_id"],
-        login_customer_id=google_ads_conf["login_customer_id"],
-        query=daily_query,
-    )
+        result_rows = google_ads_search_stream(
+            access_token=access_token,
+            developer_token=google_ads_conf["developer_token"],
+            customer_id=google_ads_conf["customer_id"],
+            login_customer_id=google_ads_conf["login_customer_id"],
+            query=query,
+        )
 
-    for item in daily_result_rows:
-        campaign_name = item.get("campaign", {}).get("name", "") or ""
-        day = item.get("segments", {}).get("date", "") or ""
-        unique_users = item.get("metrics", {}).get("uniqueUsers", 0)
-        rows.append(["google", to_month(day), day, campaign_name, "", "", to_int(unique_users)])
+        for item in result_rows:
+            rows.append(
+                make_output_row(
+                    media="google",
+                    scope="adset",
+                    period=month_range["label"],
+                    campaign_name=get_nested(item, "campaign", "name", default=""),
+                    adset_name=get_nested(item, "adGroup", "name", default=""),
+                    unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+    for month_range in monthly_ranges:
+        query = f"""
+            SELECT
+              campaign.name,
+              ad_group.name,
+              ad_group_ad.ad.id,
+              ad_group_ad.ad.name,
+              metrics.unique_users
+            FROM ad_group_ad
+            WHERE campaign.status != 'REMOVED'
+              AND ad_group.status != 'REMOVED'
+              AND ad_group_ad.status != 'REMOVED'
+              AND segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
+            ORDER BY campaign.name, ad_group.name, ad_group_ad.ad.id
+        """.strip()
+
+        result_rows = google_ads_search_stream(
+            access_token=access_token,
+            developer_token=google_ads_conf["developer_token"],
+            customer_id=google_ads_conf["customer_id"],
+            login_customer_id=google_ads_conf["login_customer_id"],
+            query=query,
+        )
+
+        for item in result_rows:
+            ad_name = get_nested(item, "adGroupAd", "ad", "name", default="")
+            if not ad_name:
+                ad_id = get_nested(item, "adGroupAd", "ad", "id", default="")
+                ad_name = str(ad_id) if ad_id != "" else ""
+
+            rows.append(
+                make_output_row(
+                    media="google",
+                    scope="ad",
+                    period=month_range["label"],
+                    campaign_name=get_nested(item, "campaign", "name", default=""),
+                    adset_name=get_nested(item, "adGroup", "name", default=""),
+                    ad_name=ad_name,
+                    unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
+                    unique_ad_recall_lift="",
+                )
+            )
 
     return rows
 
@@ -769,13 +1150,22 @@ def connect_spreadsheet(sheet_id, google_creds_dict):
 
 
 def write_to_sheet(spreadsheet, sheet_name, rows):
-    header = [["media", "month", "day", "cp_name", "ad_set", "ad", "reach"]]
+    header = [[
+        "media",
+        "scope",
+        "period",
+        "campaign_name",
+        "adset_name",
+        "ad_name",
+        "unique_reach",
+        "unique_ad_recall_lift",
+    ]]
 
     try:
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
         except gspread.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=7)
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=8)
 
         worksheet.clear()
         output = header + rows
@@ -787,18 +1177,25 @@ def write_to_sheet(spreadsheet, sheet_name, rows):
 
 def sort_rows(rows):
     media_order = {"meta": 0, "tiktok": 1, "google": 2}
+    scope_order = {
+        "all": 0,
+        "day": 1,
+        "campaign_day": 2,
+        "campaign": 3,
+        "adset": 4,
+        "ad": 5,
+    }
 
     def sort_key(row):
-        media, month, day, cp_name, ad_set, ad, _reach = row
-        month_num = int(str(month).replace("-", "")) if month else 0
-        day_num = 99999999 if not day else int(str(day).replace("-", ""))
+        media, scope, period, campaign_name, adset_name, ad_name, _reach, _lift = row
+        period_num = int(str(period).replace("-", "")) if period else 0
         return (
             media_order.get(media, 999),
-            -month_num,
-            -day_num,
-            cp_name,
-            ad_set,
-            ad,
+            -period_num,
+            scope_order.get(scope, 999),
+            campaign_name,
+            adset_name,
+            ad_name,
         )
 
     return sorted(rows, key=sort_key)
