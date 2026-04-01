@@ -391,7 +391,13 @@ def fetch_meta_rows(act_id, token, since, until):
         until=until,
         time_increment="monthly",
         level="ad",
-        fields=["campaign_name", "adset_name", "ad_name", "reach", "estimated_ad_recallers"],
+        fields=[
+            "campaign_name",
+            "adset_name",
+            "ad_name",
+            "reach",
+            "estimated_ad_recallers",
+        ],
     )
     for item in ad_monthly:
         rows.append(
@@ -466,12 +472,21 @@ def fetch_tiktok_rows(
 ):
     rows = []
 
+    def safe_fetch(scope_name, **kwargs):
+        try:
+            return fetch_tiktok_report(**kwargs)
+        except RuntimeError as e:
+            print(f"Warning: TikTok {scope_name} skipped: {e}")
+            return []
+
+    # all（月次） - 失敗しても全体停止しない
     for month_range in monthly_ranges:
-        batch = fetch_tiktok_report(
+        batch = safe_fetch(
+            "all",
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_ADVERTISER",
-            dimensions=["stat_time_month"],
+            dimensions=["advertiser_id"],
             metrics=["reach"],
             since=month_range["since"],
             until=month_range["until"],
@@ -487,8 +502,10 @@ def fetch_tiktok_rows(
                 )
             )
 
+    # day（日次） - 失敗しても全体停止しない
     for chunk_since, chunk_until in split_date_ranges(daily_fetch_since, output_until, 30):
-        batch = fetch_tiktok_report(
+        batch = safe_fetch(
+            "day",
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_ADVERTISER",
@@ -514,8 +531,10 @@ def fetch_tiktok_rows(
                 )
             )
 
+    # campaign_day（日次） - 失敗しても全体停止しない
     for chunk_since, chunk_until in split_date_ranges(daily_fetch_since, output_until, 30):
-        batch = fetch_tiktok_report(
+        batch = safe_fetch(
+            "campaign_day",
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_CAMPAIGN",
@@ -542,8 +561,10 @@ def fetch_tiktok_rows(
                 )
             )
 
+    # campaign（月次） - 失敗しても全体停止しない
     for month_range in monthly_ranges:
-        batch = fetch_tiktok_report(
+        batch = safe_fetch(
+            "campaign",
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_CAMPAIGN",
@@ -564,8 +585,10 @@ def fetch_tiktok_rows(
                 )
             )
 
+    # adset（月次） - 失敗しても全体停止しない
     for month_range in monthly_ranges:
-        batch = fetch_tiktok_report(
+        batch = safe_fetch(
+            "adset",
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_ADGROUP",
@@ -587,6 +610,7 @@ def fetch_tiktok_rows(
                 )
             )
 
+    # ad（月次） - 元コードで実績のある軸
     for month_range in monthly_ranges:
         batch = fetch_tiktok_report(
             advertiser_id=advertiser_id,
@@ -638,6 +662,8 @@ def fetch_tiktok_report(
             "report_type": "BASIC",
             "service_type": "AUCTION",
             "data_level": data_level,
+            "dimensions": json.dumps(dimensions, separators=(",", ":")),
+            "metrics": json.dumps(metrics, separators=(",", ":")),
             "start_date": since.strftime("%Y-%m-%d"),
             "end_date": until.strftime("%Y-%m-%d"),
             "page": page,
@@ -646,11 +672,6 @@ def fetch_tiktok_report(
             "enable_total_metrics": "false",
             "multi_adv_report_in_utc_time": "false",
         }
-
-        if dimensions:
-            params["dimensions"] = json.dumps(dimensions, separators=(",", ":"))
-        if metrics:
-            params["metrics"] = json.dumps(metrics, separators=(",", ":"))
 
         response = requests.get(url, headers=headers, params=params, timeout=120)
         try:
