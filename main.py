@@ -471,7 +471,7 @@ def fetch_tiktok_rows(
             advertiser_id=advertiser_id,
             access_token=access_token,
             data_level="AUCTION_ADVERTISER",
-            dimensions=None,
+            dimensions=["stat_time_month"],
             metrics=["reach"],
             since=month_range["since"],
             until=month_range["until"],
