@@ -46,15 +46,13 @@ def main():
     )
     print(f"TikTok rows built: {len(tiktok_rows)}")
 
-    # Google Ads はまだ未稼働のため停止
-    # google_rows = fetch_google_ads_rows(
-    #     google_ads_conf=resolved["google_ads"],
-    #     monthly_ranges=monthly_ranges,
-    #     daily_since=daily_since,
-    #     daily_until=daily_until,
-    # )
-    google_rows = []
-    print("Google Ads rows built: 0 (disabled)")
+    google_rows = fetch_google_ads_rows(
+        google_ads_conf=resolved["google_ads"],
+        monthly_ranges=monthly_ranges,
+        daily_since=daily_since,
+        daily_until=daily_until,
+    )
+    print(f"Google Ads rows built: {len(google_rows)}")
 
     all_rows = sort_rows(meta_rows + tiktok_rows + google_rows)
 
@@ -1271,7 +1269,7 @@ def truncate_text(value, limit=800):
     value = str(value)
     if len(value) <= limit:
         return value
-    return value[:limit] + "...(truncated)"
+    return value[:limit] + ".(truncated)"
 
 
 if __name__ == "__main__":
