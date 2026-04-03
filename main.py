@@ -11,6 +11,12 @@ GOOGLE_ADS_API_VERSION = "v23"
 JST = ZoneInfo("Asia/Tokyo")
 DEFAULT_WORKSHEET_NAME = "gitreport"
 
+# 媒体ごとの実行可否。使わない媒体は False にすると、
+# その媒体の取得処理をスキップし、secrets 側が空でもエラーにしません。
+ENABLE_META = True
+ENABLE_TIKTOK = True
+ENABLE_GOOGLE = True
+
 
 def main():
     print("=== Start Unified Reach Export ===")
@@ -27,32 +33,44 @@ def main():
     print(f"Target monthly ranges: {monthly_range_text}")
     print(f"Target daily range: {daily_since} to {daily_until}")
 
-    meta_rows = fetch_meta_rows(
-        act_id=resolved["meta"]["account_id"],
-        token=resolved["meta"]["token"],
-        since=daily_since,
-        until=daily_until,
-    )
-    print(f"Meta rows built: {len(meta_rows)}")
+    if ENABLE_META:
+        meta_rows = fetch_meta_rows(
+            act_id=resolved["meta"]["account_id"],
+            token=resolved["meta"]["token"],
+            since=daily_since,
+            until=daily_until,
+        )
+        print(f"Meta rows built: {len(meta_rows)}")
+    else:
+        meta_rows = []
+        print("Meta skipped")
 
-    tiktok_fetch_since = get_tiktok_daily_fetch_since(daily_until)
-    tiktok_rows = fetch_tiktok_rows(
-        advertiser_id=resolved["tiktok"]["advertiser_id"],
-        access_token=resolved["tiktok"]["access_token"],
-        monthly_ranges=monthly_ranges,
-        output_since=daily_since,
-        output_until=daily_until,
-        daily_fetch_since=tiktok_fetch_since,
-    )
-    print(f"TikTok rows built: {len(tiktok_rows)}")
+    if ENABLE_TIKTOK:
+        tiktok_fetch_since = get_tiktok_daily_fetch_since(daily_until)
+        tiktok_rows = fetch_tiktok_rows(
+            advertiser_id=resolved["tiktok"]["advertiser_id"],
+            access_token=resolved["tiktok"]["access_token"],
+            monthly_ranges=monthly_ranges,
+            output_since=daily_since,
+            output_until=daily_until,
+            daily_fetch_since=tiktok_fetch_since,
+        )
+        print(f"TikTok rows built: {len(tiktok_rows)}")
+    else:
+        tiktok_rows = []
+        print("TikTok skipped")
 
-    google_rows = fetch_google_ads_rows(
-        google_ads_conf=resolved["google_ads"],
-        monthly_ranges=monthly_ranges,
-        daily_since=daily_since,
-        daily_until=daily_until,
-    )
-    print(f"Google Ads rows built: {len(google_rows)}")
+    if ENABLE_GOOGLE:
+        google_rows = fetch_google_ads_rows(
+            google_ads_conf=resolved["google_ads"],
+            monthly_ranges=monthly_ranges,
+            daily_since=daily_since,
+            daily_until=daily_until,
+        )
+        print(f"Google Ads rows built: {len(google_rows)}")
+    else:
+        google_rows = []
+        print("Google Ads skipped")
 
     all_rows = sort_rows(meta_rows + tiktok_rows + google_rows)
 
@@ -156,13 +174,30 @@ def resolve_config(config):
 
 def validate_config(resolved):
     required = {
-        "meta.token": resolved["meta"]["token"],
-        "meta.account_id": resolved["meta"]["account_id"],
-        "tiktok.access_token": resolved["tiktok"]["access_token"],
-        "tiktok.advertiser_id": resolved["tiktok"]["advertiser_id"],
         "sheet.spreadsheet_id": resolved["sheet"]["spreadsheet_id"],
         "sheet.google_service_account": resolved["sheet"]["google_service_account"],
     }
+
+    if ENABLE_META:
+        required.update({
+            "meta.token": resolved["meta"]["token"],
+            "meta.account_id": resolved["meta"]["account_id"],
+        })
+
+    if ENABLE_TIKTOK:
+        required.update({
+            "tiktok.access_token": resolved["tiktok"]["access_token"],
+            "tiktok.advertiser_id": resolved["tiktok"]["advertiser_id"],
+        })
+
+    if ENABLE_GOOGLE:
+        required.update({
+            "google_ads.developer_token": resolved["google_ads"]["developer_token"],
+            "google_ads.client_id": resolved["google_ads"]["client_id"],
+            "google_ads.client_secret": resolved["google_ads"]["client_secret"],
+            "google_ads.refresh_token": resolved["google_ads"]["refresh_token"],
+            "google_ads.customer_id": resolved["google_ads"]["customer_id"],
+        })
 
     missing = [k for k, v in required.items() if not v]
     if missing:
