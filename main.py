@@ -237,6 +237,13 @@ def get_tiktok_daily_fetch_since(until):
     return until - timedelta(days=63)
 
 
+def iter_dates(since, until):
+    current = since
+    while current <= until:
+        yield current
+        current += timedelta(days=1)
+
+
 def make_output_row(
     media,
     scope,
@@ -887,61 +894,90 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
 
     rows = []
 
+    # all（月次 summary row） + campaign（月次明細）
     for month_range in monthly_ranges:
-        query = f"""
+        monthly_campaign_query = f"""
             SELECT
+              campaign.id,
+              campaign.name,
               metrics.unique_users
-            FROM customer
-            WHERE segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
+            FROM campaign
+            WHERE campaign.status != 'REMOVED'
+              AND segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
+            ORDER BY campaign.id
         """.strip()
 
-        result_rows = google_ads_search_stream(
+        monthly_campaign_response = google_ads_search_stream(
             access_token=access_token,
             developer_token=google_ads_conf["developer_token"],
             customer_id=google_ads_conf["customer_id"],
             login_customer_id=google_ads_conf["login_customer_id"],
-            query=query,
+            query=monthly_campaign_query,
+            summary_row_setting="SUMMARY_ROW_WITH_RESULTS",
         )
 
-        for item in result_rows:
+        summary_row = monthly_campaign_response.get("summary_row")
+        if summary_row:
             rows.append(
                 make_output_row(
                     media="google",
                     scope="all",
                     period=month_range["label"],
+                    unique_reach=get_nested(
+                        summary_row, "metrics", "uniqueUsers", default=0
+                    ),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+        for item in monthly_campaign_response["results"]:
+            rows.append(
+                make_output_row(
+                    media="google",
+                    scope="campaign",
+                    period=month_range["label"],
+                    campaign_name=get_nested(item, "campaign", "name", default=""),
                     unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
                     unique_ad_recall_lift="",
                 )
             )
 
-    daily_all_query = f"""
-        SELECT
-          segments.date,
-          metrics.unique_users
-        FROM customer
-        WHERE segments.date BETWEEN '{daily_since:%Y-%m-%d}' AND '{daily_until:%Y-%m-%d}'
-        ORDER BY segments.date
-    """.strip()
+    # day（日別 summary row。1日1クエリ）
+    for day in iter_dates(daily_since, daily_until):
+        daily_all_query = f"""
+            SELECT
+              campaign.id,
+              metrics.unique_users
+            FROM campaign
+            WHERE campaign.status != 'REMOVED'
+              AND segments.date = '{day:%Y-%m-%d}'
+            ORDER BY campaign.id
+        """.strip()
 
-    daily_all_rows = google_ads_search_stream(
-        access_token=access_token,
-        developer_token=google_ads_conf["developer_token"],
-        customer_id=google_ads_conf["customer_id"],
-        login_customer_id=google_ads_conf["login_customer_id"],
-        query=daily_all_query,
-    )
-
-    for item in daily_all_rows:
-        rows.append(
-            make_output_row(
-                media="google",
-                scope="day",
-                period=get_nested(item, "segments", "date", default=""),
-                unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
-                unique_ad_recall_lift="",
-            )
+        daily_all_response = google_ads_search_stream(
+            access_token=access_token,
+            developer_token=google_ads_conf["developer_token"],
+            customer_id=google_ads_conf["customer_id"],
+            login_customer_id=google_ads_conf["login_customer_id"],
+            query=daily_all_query,
+            summary_row_setting="SUMMARY_ROW_ONLY",
         )
 
+        summary_row = daily_all_response.get("summary_row")
+        if summary_row:
+            rows.append(
+                make_output_row(
+                    media="google",
+                    scope="day",
+                    period=day.strftime("%Y-%m-%d"),
+                    unique_reach=get_nested(
+                        summary_row, "metrics", "uniqueUsers", default=0
+                    ),
+                    unique_ad_recall_lift="",
+                )
+            )
+
+    # campaign_day（日次明細）
     daily_campaign_query = f"""
         SELECT
           campaign.id,
@@ -954,7 +990,7 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
         ORDER BY segments.date, campaign.id
     """.strip()
 
-    daily_campaign_rows = google_ads_search_stream(
+    daily_campaign_response = google_ads_search_stream(
         access_token=access_token,
         developer_token=google_ads_conf["developer_token"],
         customer_id=google_ads_conf["customer_id"],
@@ -962,7 +998,7 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
         query=daily_campaign_query,
     )
 
-    for item in daily_campaign_rows:
+    for item in daily_campaign_response["results"]:
         rows.append(
             make_output_row(
                 media="google",
@@ -973,116 +1009,6 @@ def fetch_google_ads_rows(google_ads_conf, monthly_ranges, daily_since, daily_un
                 unique_ad_recall_lift="",
             )
         )
-
-    for month_range in monthly_ranges:
-        query = f"""
-            SELECT
-              campaign.id,
-              campaign.name,
-              metrics.unique_users
-            FROM campaign
-            WHERE campaign.status != 'REMOVED'
-              AND segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
-            ORDER BY campaign.id
-        """.strip()
-
-        result_rows = google_ads_search_stream(
-            access_token=access_token,
-            developer_token=google_ads_conf["developer_token"],
-            customer_id=google_ads_conf["customer_id"],
-            login_customer_id=google_ads_conf["login_customer_id"],
-            query=query,
-        )
-
-        for item in result_rows:
-            rows.append(
-                make_output_row(
-                    media="google",
-                    scope="campaign",
-                    period=month_range["label"],
-                    campaign_name=get_nested(item, "campaign", "name", default=""),
-                    unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
-                    unique_ad_recall_lift="",
-                )
-            )
-
-    for month_range in monthly_ranges:
-        query = f"""
-            SELECT
-              campaign.name,
-              ad_group.id,
-              ad_group.name,
-              metrics.unique_users
-            FROM ad_group
-            WHERE campaign.status != 'REMOVED'
-              AND ad_group.status != 'REMOVED'
-              AND segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
-            ORDER BY campaign.name, ad_group.id
-        """.strip()
-
-        result_rows = google_ads_search_stream(
-            access_token=access_token,
-            developer_token=google_ads_conf["developer_token"],
-            customer_id=google_ads_conf["customer_id"],
-            login_customer_id=google_ads_conf["login_customer_id"],
-            query=query,
-        )
-
-        for item in result_rows:
-            rows.append(
-                make_output_row(
-                    media="google",
-                    scope="adset",
-                    period=month_range["label"],
-                    campaign_name=get_nested(item, "campaign", "name", default=""),
-                    adset_name=get_nested(item, "adGroup", "name", default=""),
-                    unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
-                    unique_ad_recall_lift="",
-                )
-            )
-
-    for month_range in monthly_ranges:
-        query = f"""
-            SELECT
-              campaign.name,
-              ad_group.name,
-              ad_group_ad.ad.id,
-              ad_group_ad.ad.name,
-              metrics.unique_users
-            FROM ad_group_ad
-            WHERE campaign.status != 'REMOVED'
-              AND ad_group.status != 'REMOVED'
-              AND ad_group_ad.status != 'REMOVED'
-              AND segments.date BETWEEN '{month_range["since"]:%Y-%m-%d}' AND '{month_range["until"]:%Y-%m-%d}'
-            ORDER BY campaign.name, ad_group.name, ad_group_ad.ad.id
-        """.strip()
-
-        result_rows = google_ads_search_stream(
-            access_token=access_token,
-            developer_token=google_ads_conf["developer_token"],
-            customer_id=google_ads_conf["customer_id"],
-            login_customer_id=google_ads_conf["login_customer_id"],
-            query=query,
-        )
-
-        for item in result_rows:
-            ad_name = get_nested(item, "adGroupAd", "ad", "name", default="")
-            if not ad_name:
-                ad_id = get_nested(item, "adGroupAd", "ad", "id", default="")
-                ad_name = str(ad_id) if ad_id != "" else ""
-
-            rows.append(
-                make_output_row(
-                    media="google",
-                    scope="ad",
-                    period=month_range["label"],
-                    campaign_name=get_nested(item, "campaign", "name", default=""),
-                    adset_name=get_nested(item, "adGroup", "name", default=""),
-                    ad_name=ad_name,
-                    unique_reach=get_nested(item, "metrics", "uniqueUsers", default=0),
-                    unique_ad_recall_lift="",
-                )
-            )
 
     return rows
 
@@ -1116,7 +1042,12 @@ def refresh_google_ads_access_token(client_id, client_secret, refresh_token):
 
 
 def google_ads_search_stream(
-    access_token, developer_token, customer_id, login_customer_id, query
+    access_token,
+    developer_token,
+    customer_id,
+    login_customer_id,
+    query,
+    summary_row_setting=None,
 ):
     url = (
         f"https://googleads.googleapis.com/{GOOGLE_ADS_API_VERSION}/customers/"
@@ -1130,7 +1061,11 @@ def google_ads_search_stream(
     if login_customer_id:
         headers["login-customer-id"] = login_customer_id
 
-    response = requests.post(url, headers=headers, json={"query": query}, timeout=120)
+    body = {"query": query}
+    if summary_row_setting:
+        body["summaryRowSetting"] = summary_row_setting
+
+    response = requests.post(url, headers=headers, json=body, timeout=120)
 
     try:
         response.raise_for_status()
@@ -1152,10 +1087,17 @@ def google_ads_search_stream(
         )
 
     all_rows = []
+    summary_row = None
+
     for chunk in payload:
         all_rows.extend(chunk.get("results", []))
+        if chunk.get("summaryRow"):
+            summary_row = chunk["summaryRow"]
 
-    return all_rows
+    return {
+        "results": all_rows,
+        "summary_row": summary_row,
+    }
 
 
 def connect_spreadsheet(sheet_id, google_creds_dict):
