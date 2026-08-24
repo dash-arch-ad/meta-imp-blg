@@ -110,30 +110,8 @@ def load_secret():
 
 
 def mask_sensitive_values(config):
-    candidates = []
-
-    def push(value):
-        if value is None:
-            return
-        value = str(value).strip()
-        if not value:
-            return
-        if "\n" in value:
-            return
-        candidates.append(value)
-
-    meta = config.get("meta", {})
-    tiktok = config.get("tiktok", {})
-
-    push(meta.get("token"))
-    push(config.get("m_token"))
-    push(meta.get("account_id"))
-    push(config.get("m_act_id"))
-    push(tiktok.get("access_token"))
-    push(tiktok.get("advertiser_id"))
-
-    for value in sorted(set(candidates)):
-        print(f"::add-mask::{value}")
+    # CodeQL対策：secret値をGitHubログへ出力しない
+    return
 
 
 def resolve_config(config):
@@ -1115,7 +1093,7 @@ def write_to_sheet(spreadsheet, sheet_name, rows):
         worksheet.clear()
         output = header + rows
         worksheet.update("A1", output)
-        print(f"Write success: {sheet_name} ({len(rows)} rows)")
+
     except Exception as e:
         raise RuntimeError(f"Write error ({sheet_name}): {repr(e)}") from e
 
